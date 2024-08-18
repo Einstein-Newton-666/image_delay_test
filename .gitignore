@@ -1,0 +1,12 @@
+# for vscode
+.vscode
+# for jetbrains
+.idea
+
+# for deployment
+build/
+log/
+install/
+
+# for MacOS
+.DS_Store
