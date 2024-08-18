@@ -68,6 +68,13 @@ Node("image_sub_node",options)
             }            
         ).detach();
         break;
+    case 4:
+        shm_img_sub_ =  this->create_subscription<shm_msgs::msg::Image8m>(
+            "/image_raw2", rclcpp::SensorDataQoS().keep_last(queue_size),
+            std::bind(&image_sub::shmImageCallback, this, std::placeholders::_1));
+
+        break;
+
     default:
         break;
     }
@@ -91,6 +98,14 @@ void image_sub::imageCallback2(const sensor_msgs::msg::Image::ConstSharedPtr img
     auto latency = (t1 - img_msg->header.stamp).seconds() * 1000;
     RCLCPP_INFO_STREAM(this->get_logger(), std::to_string(latency) + "ms");
 }
+
+void image_sub::shmImageCallback(const shm_msgs::msg::Image8m::SharedPtr img_msg){
+    auto image = shm_msgs::toCvShare(img_msg);
+    auto t1 =this->now();
+    auto latency = (t1 - img_msg->header.stamp).seconds() * 1000;
+    RCLCPP_INFO_STREAM(this->get_logger(), std::to_string(latency) + "ms");
+}
+
 
 
 #include "rclcpp_components/register_node_macro.hpp"

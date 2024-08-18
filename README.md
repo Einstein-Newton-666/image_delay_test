@@ -1,6 +1,6 @@
 # ros2图像传输延迟测试
 
-测试对象：ros2 image_transport，shm_video_transmission，UltraMultiThread
+测试对象：ros2 image_transport，ros2 borrow_msg + shm_msg，shm_video_transmission，UltraMultiThread
 
 测试平台：AMD Ryzen 7 5800H
 
@@ -10,7 +10,8 @@
 
 | 图像传输方式                         | 传输延迟    | cpu占用率 |
 | :----------------------------------- | ----------- | --------- |
-| ros2 image_transport（queue_size=1） | 2~11ms      | 50%       |
+| ros2 image_transport(queue_size=1)   | 2~11ms      | 50%       |
+| ros2 borrow_msg + shm_msg            | 2~5ms       | 20%       |
 | shm_video_transmission               | 0.4~1.8ms   | 20%       |
 | UltraMultiThread                     | 0.04~0.09ms | 15%       |
 

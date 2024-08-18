@@ -20,6 +20,8 @@
   <depend>shm_video_transmission</depend>
   <depend>Python</depend>
   <depend>pybind11</depend>
+  <depend>shm_msgs</depend>
+  <depend>PCL</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

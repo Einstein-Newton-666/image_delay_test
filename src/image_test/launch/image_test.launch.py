@@ -21,8 +21,8 @@ def generate_launch_description():
         DeclareLaunchArgument(name='queue_size',
                     default_value='1'),
         DeclareLaunchArgument(name='mode',
-                    default_value='3'),
-                    # 1:ros 2:shm_video_transmission 3:UltraMultiThread
+                    default_value='4'),
+                    # 1:ros 2:shm_video_transmission 3:UltraMultiThread 4:Loaned msg+shm_msg
         ComposableNodeContainer(
             name='image_test',
             namespace='',
@@ -33,7 +33,7 @@ def generate_launch_description():
                     package='image_test',
                     plugin='image_test::image_sub',
                     name='image_sub',
-                    extra_arguments=[{'use_intra_process_comms': True}],
+                    extra_arguments=[{'use_intra_process_comms': False}],
                     parameters=[{
                         'copy_image': LaunchConfiguration('copy_image'),
                         'queue_size': LaunchConfiguration('queue_size'),
@@ -44,7 +44,7 @@ def generate_launch_description():
                     package='image_test',
                     plugin='image_test::image_pub',
                     name='image_pub',
-                    extra_arguments=[{'use_intra_process_comms': True}],
+                    extra_arguments=[{'use_intra_process_comms': False}],
                     parameters=[{
                         'use_sensor_data_qos': LaunchConfiguration('use_sensor_data_qos'),
                         'image_pub_frequency': LaunchConfiguration('image_pub_frequency'),

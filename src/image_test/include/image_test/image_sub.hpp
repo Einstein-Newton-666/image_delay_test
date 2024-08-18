@@ -13,6 +13,8 @@
 #include "image_test/image_pack.hpp"
 #include "shm_video_transmission/shm_video_transmission.h"
 #include <umt/umt.hpp>
+#include "shm_msgs/msg/image.hpp"
+#include "shm_msgs/opencv_conversions.hpp"
 
 namespace image_test{
     class image_sub: public rclcpp::Node{
@@ -29,12 +31,15 @@ namespace image_test{
 
         std::shared_ptr<umt::Subscriber<ImagePack>> sub;
 
+        rclcpp::Subscription<shm_msgs::msg::Image8m>::SharedPtr shm_img_sub_;
+
         shm_video_trans::FrameBag receivedFrame;
 
         void imageCallback1(const sensor_msgs::msg::Image::ConstSharedPtr img_msg);
 
         void imageCallback2(const sensor_msgs::msg::Image::ConstSharedPtr img_msg);
 
+        void shmImageCallback(const shm_msgs::msg::Image8m::SharedPtr img_msg);
     };
 
 }
