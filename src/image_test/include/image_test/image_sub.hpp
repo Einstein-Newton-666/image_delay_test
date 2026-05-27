@@ -1,4 +1,4 @@
-#pragma once 
+#pragma once
 
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -15,6 +15,10 @@
 #include <umt/umt.hpp>
 #include "shm_msgs/msg/image.hpp"
 #include "shm_msgs/opencv_conversions.hpp"
+
+#include "iceoryx_posh/popo/untyped_subscriber.hpp"
+
+struct IceoryxImageHeader;
 
 namespace image_test{
     class image_sub: public rclcpp::Node{

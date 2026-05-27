@@ -5,6 +5,9 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# 性能优化：启用 O3 和原生指令集（AVX2 等加速 memcpy）
+add_compile_options(-O3 -march=native)
+
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 
 # find dependencies
@@ -15,6 +18,7 @@ find_package(VTK REQUIRED)
 find_package(libusb REQUIRED)
 
 find_package(shm_msgs REQUIRED)
+find_package(iceoryx_posh REQUIRED)
 
 include_directories(
   ${Python_INCLUDE_DIRS}
@@ -34,10 +38,11 @@ target_include_directories(image_sub PUBLIC
   $<INSTALL_INTERFACE:include>)
 
 rclcpp_components_register_node(image_sub PLUGIN image_test::image_sub EXECUTABLE image_sub_node)
+target_link_libraries(image_sub iceoryx_posh::iceoryx_posh)
 
 ament_auto_add_library(image_pub SHARED src/image_pub.cpp)
 
-target_link_libraries(image_pub ${shm_msgs_LIBRARIES})
+target_link_libraries(image_pub ${shm_msgs_LIBRARIES} iceoryx_posh::iceoryx_posh)
 target_include_directories(image_pub PUBLIC 
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)

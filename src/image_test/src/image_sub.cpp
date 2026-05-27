@@ -1,5 +1,8 @@
 #include "image_test/image_sub.hpp"
 #include "image_test/image_pack.hpp"
+#include "image_test/image_pub.hpp"
+#include "iceoryx_posh/runtime/posh_runtime.hpp"
+#include "iceoryx_posh/capro/service_description.hpp"
 
 using namespace image_test;
 
@@ -74,7 +77,34 @@ Node("image_sub_node",options)
             std::bind(&image_sub::shmImageCallback, this, std::placeholders::_1));
 
         break;
+    case 5:
+    {
+        try {
+            iox::runtime::PoshRuntime::initRuntime("image_test");
+        } catch (...) {}
+        std::thread([this]() {
+            iox::popo::UntypedSubscriber sub(
+                iox::capro::ServiceDescription("Image", "Test", "RawImage"));
+            while (true) {
+                auto take_result = sub.take();
+                if (take_result.has_error()) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+                    continue;
+                }
+                const auto* ptr = take_result.value();
+                const auto* header = reinterpret_cast<const IceoryxImageHeader*>(ptr);
 
+                auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                double latency_ms = (now_ns - header->stamp_ns) / 1e6;
+
+                RCLCPP_INFO_STREAM(this->get_logger(), std::to_string(latency_ms) + "ms");
+
+                sub.release(ptr);
+            }
+        }).detach();
+        break;
+    }
     default:
         break;
     }
@@ -86,7 +116,12 @@ image_sub::~image_sub(){
 }
 
 void image_sub::imageCallback1(const sensor_msgs::msg::Image::ConstSharedPtr img_msg){
-    auto img = cv_bridge::toCvShare(img_msg, "rgb8")->image;
+    // 【优化2】修复编码不匹配：避免 toCvShare 因编码不同退化为 toCvCopy + 颜色转换
+    // 原始问题：toCvShare(img_msg, "rgb8") 请求 rgb8，但发布端发 bgr8，编码不匹配触发 cvtColor 拷贝
+    // 优化方式：不指定编码，直接共享原始数据，消除 5.9MB 颜色转换拷贝
+    // 泛用性：不指定编码时 toCvShare 直接共享消息 buffer，适用于任意编码格式
+    //   如需特定编码转换，在业务代码中按需调用 cv::cvtColor
+    auto img = cv_bridge::toCvShare(img_msg)->image;
     auto t1 =this->now();
     auto latency = (t1 - img_msg->header.stamp).seconds() * 1000;
     RCLCPP_INFO_STREAM(this->get_logger(), std::to_string(latency) + "ms");
