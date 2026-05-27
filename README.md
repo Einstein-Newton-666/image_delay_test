@@ -106,3 +106,14 @@ ros2 launch image_test image_test.launch.py mode:=4 image_pub_frequency:=200
 | shm_video_transmission | Boost.Interprocess 共享内存 | 延迟低，不依赖 DDS | 仅支持 CV_8UC3，需手动管理共享内存 |
 | UltraMultiThread | 进程内 shared_ptr 传递 | 延迟极低，无系统调用 | 仅限同一进程内通信，需 ROS 2 Component |
 | iceoryx直接通信 | iceoryx 原生 API 共享内存 | 延迟最低的跨进程方案 | 需要 RouDi 守护进程，需自定义内存池配置 |
+
+## 进一步优化方向
+
+当前 mode=5 (0.24-0.52ms) 已接近 CPU 侧 memcpy 的物理极限（5.9MB / 20GB/s ≈ 0.3ms）。进一步降低延迟需要消除 memcpy：
+
+| 方向 | 预计延迟 | 条件 |
+|------|----------|------|
+| 相机 V4L2 + DMA-BUF 直写共享内存 | <0.1ms | USB/CSI 相机 |
+| CUDA IPC 共享 GPU 内存 | 1-5us | NVIDIA GPU |
+| DPDK rte_ring + hugepage | <100ns | 独占 CPU 核 |
+| Zenoh SHM (rmw_zenoh) | 10-100us | ROS 2 Jazzy+ |
