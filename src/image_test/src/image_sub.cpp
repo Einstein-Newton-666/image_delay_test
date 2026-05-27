@@ -94,6 +94,11 @@ Node("image_sub_node",options)
                 const auto* ptr = take_result.value();
                 const auto* header = reinterpret_cast<const IceoryxImageHeader*>(ptr);
 
+                // 获取可用的 cv::Mat（零拷贝，直接引用共享内存）
+                const auto* img_data = reinterpret_cast<const uint8_t*>(ptr) + sizeof(IceoryxImageHeader);
+                cv::Mat received_image(header->height, header->width, CV_8UC3, const_cast<uint8_t*>(img_data));
+
+                // 时间戳：获取到可用 cv::Mat 之后的时刻
                 auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();
                 double latency_ms = (now_ns - header->stamp_ns) / 1e6;

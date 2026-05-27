@@ -168,12 +168,12 @@ void image_pub::publish_image_iceoryx(){
     std::strncpy(header->encoding, "bgr8", sizeof(header->encoding) - 1);
     header->encoding[sizeof(header->encoding) - 1] = '\0';
 
-    // 零拷贝：在共享内存 chunk 上直接创建 cv::Mat，图像数据直接写入共享内存
-    // 替代原来的 memcpy(image.data → chunk)，省去 5.9MB 拷贝
+    // 直接在共享内存 chunk 上创建 cv::Mat 并填充，不经过私有堆的 image
+    // 与原来的区别：原来 image(私有堆) → copyTo → chunk(共享内存)，现在直接写入 chunk
+    // 实际场景：相机回调直接写入 wrapper，完全跳过中间 buffer
     auto* img_data = reinterpret_cast<uint8_t*>(ptr) + sizeof(IceoryxImageHeader);
     cv::Mat wrapper(image.rows, image.cols, image.type(), img_data);
-    wrapper.setTo(cv::Scalar(0, 0, 0));
-    // 实际场景：camera_frame.copyTo(wrapper) 或直接操作 wrapper 的像素
+    wrapper.setTo(cv::Scalar(0, 0, 0));  // 直接填充共享内存（实际场景用 camera_frame.copyTo(wrapper)）
 
     iceoryx_pub_->publish(ptr);
 }
