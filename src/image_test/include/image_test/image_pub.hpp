@@ -48,6 +48,8 @@ namespace image_test{
 
         rclcpp::Publisher<shm_msgs::msg::Image8m>::SharedPtr loaned_img_pub_;
 
+        shm_msgs::msg::Image8m::SharedPtr reusable_image_msg_;
+
         rclcpp::TimerBase::SharedPtr image_launcher;
 
         cv::Mat image;
@@ -61,6 +63,10 @@ namespace image_test{
         std::shared_ptr<umt::Publisher<ImagePack>> pub;
 
         bool move_image;
+
+        bool can_loan_image_msg_;
+
+        bool generate_in_transport_buffer_;
 
         // iceoryx 直接通信
         std::unique_ptr<iox::popo::UntypedPublisher> iceoryx_pub_;

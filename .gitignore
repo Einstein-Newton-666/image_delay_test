@@ -10,3 +10,5 @@ install/
 
 # for MacOS
 .DS_Store
+
+benchmark_results/

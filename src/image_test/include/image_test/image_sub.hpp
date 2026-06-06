@@ -10,6 +10,10 @@
 #include <image_transport/subscriber_filter.hpp>
 #include <cv_bridge/cv_bridge.h>
 
+#include <atomic>
+#include <thread>
+#include <vector>
+
 #include "image_test/image_pack.hpp"
 #include "shm_video_transmission/shm_video_transmission.h"
 #include <umt/umt.hpp>
@@ -38,6 +42,16 @@ namespace image_test{
         rclcpp::Subscription<shm_msgs::msg::Image8m>::SharedPtr shm_img_sub_;
 
         shm_video_trans::FrameBag receivedFrame;
+
+        std::atomic_bool running_{true};
+
+        std::vector<std::thread> worker_threads_;
+
+        void startShmVideoReceiver(bool copy_image);
+
+        void startUmtReceiver();
+
+        void startIceoryxReceiver();
 
         void imageCallback1(const sensor_msgs::msg::Image::ConstSharedPtr img_msg);
 

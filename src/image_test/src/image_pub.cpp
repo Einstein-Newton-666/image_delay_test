@@ -1,5 +1,6 @@
 #include "image_test/image_pack.hpp"
 #include "image_test/image_pub.hpp"
+#include "image_test/image_pub_utils.hpp"
 #include "shm_msgs/array_helper.hpp"
 #include "iceoryx_posh/runtime/posh_runtime.hpp"
 #include "iceoryx_posh/capro/service_description.hpp"
@@ -20,6 +21,9 @@ image_pub::image_pub(const rclcpp::NodeOptions & options = rclcpp::NodeOptions()
     loaned_img_pub_ = this->create_publisher<shm_msgs::msg::Image8m>("image_raw2", rclcpp::SensorDataQoS());
 
     move_image = this->declare_parameter("move_image", false);
+    // true: create the test image directly in the transport-owned buffer.
+    // false: create a normal cv::Mat first, then copy it into the transport buffer.
+    generate_in_transport_buffer_ = this->declare_parameter("generate_in_transport_buffer", true);
 
     int image_pub_frequency = this->declare_parameter("image_pub_frequency", 200);
 
@@ -29,9 +33,20 @@ image_pub::image_pub(const rclcpp::NodeOptions & options = rclcpp::NodeOptions()
 
     pub = std::make_shared<umt::Publisher<ImagePack>>("image");
 
+    can_loan_image_msg_ = loaned_img_pub_->can_loan_messages();
+
     switch (mode)
     {
     case 4:
+        RCLCPP_INFO(
+            this->get_logger(),
+            "mode 4 loaned image messages: %s",
+            can_loan_image_msg_ ? "enabled" : "unsupported, using reusable local message");
+        if (!can_loan_image_msg_) {
+            reusable_image_msg_ = std::make_shared<shm_msgs::msg::Image8m>(
+                rosidl_runtime_cpp::MessageInitialization::SKIP);
+            clear_image8m_unused_tail(*reusable_image_msg_);
+        }
         image_launcher = this->create_wall_timer(
             std::chrono::milliseconds(int(1000/image_pub_frequency)),
             std::bind(&image_pub::publish_image2,this)
@@ -43,7 +58,6 @@ image_pub::image_pub(const rclcpp::NodeOptions & options = rclcpp::NodeOptions()
         } catch (...) {}
         iceoryx_pub_ = std::make_unique<iox::popo::UntypedPublisher>(
             iox::capro::ServiceDescription("Image", "Test", "RawImage"));
-        image = cv::Mat(1024, 1920, CV_8UC3, cv::Scalar(0, 0, 0));
         image_launcher = this->create_wall_timer(
             std::chrono::milliseconds(int(1000/image_pub_frequency)),
             std::bind(&image_pub::publish_image_iceoryx,this)
@@ -76,8 +90,10 @@ void image_pub::publish_image1(){
     } else {
         image.setTo(cv::Scalar(0, 0, 0));
     }
-    auto time = rclcpp::Clock().now();
-    auto std_time = std::chrono::steady_clock::now();
+
+    const auto image_ready_time = this->now();
+    const auto image_ready_steady = std::chrono::steady_clock::now();
+
     switch (this->mode)
     {
     case 1:
@@ -88,11 +104,11 @@ void image_pub::publish_image1(){
             image_msg_ = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", image).toImageMsg();
         }
         image_msg_->header.frame_id = "camera_optical_frame";
-        image_msg_->header.stamp  = time;
+        image_msg_->header.stamp  = image_ready_time;
         img_pub_.publish(image_msg_);
         break;
     case 2:
-        sender->send(image, std_time);
+        sender->send(image, image_ready_steady);
             // RCLCPP_INFO_STREAM(this->get_logger(),"please set the mode to 1,2,3 or 4");
         break;
     case 3:
@@ -101,7 +117,7 @@ void image_pub::publish_image1(){
         // 优化方式：std::move(image) 将 Mat 的所有权转移给 ImagePack，避免拷贝
         // 泛用性：move 后 image 变为空 Mat，下一帧由预分配逻辑重新创建
         //   实际相机场景中每帧本来就是新 Mat，move 无副作用
-        pub->push(ImagePack(std::move(image), time));
+        pub->push(ImagePack(std::move(image), image_ready_time));
         break;
     default:
         RCLCPP_INFO_STREAM(this->get_logger(),"error mode"+ std::to_string(mode) + ", please set the mode to 1,2 or 3");
@@ -110,45 +126,72 @@ void image_pub::publish_image1(){
 }
 
 void image_pub::publish_image2(){
-    // 【优化3】直接写入 loaned 消息：跳过 CvImage 中间层，消除 5.9MB memcpy
-    // 原始问题：每帧 make_shared<CvImage> + new Mat + toImageMsg memcpy，共 3 次分配 + 1 次拷贝
-    // 优化方式：先 borrow loaned 消息，再用 cv::Mat wrapper 直接引用 loaned 消息的共享内存 buffer
-    //   图像数据直接写入共享内存，省去中间 Mat 分配和 memcpy
-    // 泛用性：wrapper 的尺寸/类型由实际图像决定，此处使用测试用的 1920x1024 CV_8UC3
-    //   实际相机场景中，用 camera_frame.copyTo(wrapper) 将相机数据直接写入共享内存
-    auto loanedMsg = loaned_img_pub_->borrow_loaned_message();
-    if (loanedMsg.is_valid()) {
-        auto& msg = loanedMsg.get();
-
-        // 设置消息头（使用 shm_msgs 辅助函数处理自定义 String 类型）
-        msg.header.stamp = now();
-        shm_msgs::set_str(msg.header.frame_id, "camera_optical_frame");
-        msg.height = 1024;
-        msg.width = 1920;
-        shm_msgs::set_str(msg.encoding, "bgr8");
-        msg.is_bigendian = 0;
-        msg.step = 1920 * 3;
-
-        // 直接在 loaned 消息的共享内存上创建 cv::Mat，避免中间 buffer 和 memcpy
-        cv::Mat wrapper(1024, 1920, CV_8UC3, msg.data.data());
-        wrapper.setTo(cv::Scalar(0, 0, 0));
-
-        loaned_img_pub_->publish(std::move(loanedMsg));
-    } else {
-        RCLCPP_INFO(this->get_logger(), "Failed to get LoanMessage!");
+    rclcpp::Time image_ready_time;
+    if (!generate_in_transport_buffer_) {
+        // Copy benchmark path: the source Mat is the start point.  The measured
+        // latency intentionally includes borrowing/loaning and copyTo().
+        if (image.empty()) {
+            image = cv::Mat(kImageHeight, kImageWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+        } else {
+            image.setTo(cv::Scalar(0, 0, 0));
+        }
+        image_ready_time = now();
     }
+
+    // 只有 RMW 真正支持 loan 时才借中间件内存；否则复用本地大消息，避免每帧 fallback 构造时清零 8MB。
+    if (can_loan_image_msg_) {
+        auto loanedMsg = loaned_img_pub_->borrow_loaned_message();
+        if (!loanedMsg.is_valid()) {
+            RCLCPP_INFO(this->get_logger(), "Failed to get LoanMessage!");
+            return;
+        }
+        auto& msg = loanedMsg.get();
+        cv::Mat wrapper = prepare_image8m_payload(msg);
+
+        if (generate_in_transport_buffer_) {
+            // Direct path: wrapper is already the loaned payload, so the
+            // timestamp is taken after the target cv::Mat becomes usable.
+            wrapper.setTo(cv::Scalar(0, 0, 0));
+            image_ready_time = now();
+        } else {
+            image.copyTo(wrapper);
+        }
+        clear_image8m_unused_tail(msg);
+
+        msg.header.stamp = image_ready_time;
+        loaned_img_pub_->publish(std::move(loanedMsg));
+        return;
+    }
+
+    auto& msg = *reusable_image_msg_;
+    cv::Mat wrapper = prepare_image8m_payload(msg);
+
+    if (generate_in_transport_buffer_) {
+        // Fallback still writes directly into the reusable message buffer; it
+        // is not a true RMW loan, but keeps the same timing semantics.
+        wrapper.setTo(cv::Scalar(0, 0, 0));
+        image_ready_time = now();
+    } else {
+        image.copyTo(wrapper);
+    }
+    msg.header.stamp = image_ready_time;
+    loaned_img_pub_->publish(msg);
 }
 
 void image_pub::publish_image_iceoryx(){
-    // 【零拷贝优化】直接在 iceoryx 共享内存 chunk 上生成图像，消除 memcpy
-    // 原始流程：loan chunk → 写头 → memcpy(image.data → chunk) → publish
-    // 优化流程：loan chunk → 写头 → 直接在 chunk 上创建 cv::Mat 并填充 → publish
-    // 技术原理：cv::Mat 支持 external data 模式，用外部指针作为数据缓冲区
-    //   图像生成代码（setTo/copyTo/相机回调）直接写入共享内存，无需中间 buffer
-    // 泛用性：cv::Mat wrapper 的尺寸/类型由 image 成员决定，适配任意图像格式
-    //   实际相机场景中，camera_frame.copyTo(wrapper) 将相机数据直接写入共享内存
+    std::chrono::steady_clock::time_point image_ready_steady;
+    if (!generate_in_transport_buffer_) {
+        // Copy benchmark path: source Mat is ready before the iceoryx loan, so
+        // latency includes loan(), copyTo(), publish(), take(), and wrapping.
+        if (image.empty()) {
+            image = cv::Mat(kImageHeight, kImageWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+        } else {
+            image.setTo(cv::Scalar(0, 0, 0));
+        }
+        image_ready_steady = std::chrono::steady_clock::now();
+    }
 
-    const size_t img_size = image.rows * image.step[0];
+    const size_t img_size = kImagePayloadSize;
     const size_t total_size = sizeof(IceoryxImageHeader) + img_size;
 
     auto result = iceoryx_pub_->loan(total_size, alignof(IceoryxImageHeader));
@@ -159,21 +202,25 @@ void image_pub::publish_image_iceoryx(){
 
     // 写入头信息
     auto* header = reinterpret_cast<IceoryxImageHeader*>(ptr);
-    auto now_steady = std::chrono::steady_clock::now();
-    header->stamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        now_steady.time_since_epoch()).count();
-    header->width = image.cols;
-    header->height = image.rows;
-    header->step = image.step[0];
+    header->width = kImageWidth;
+    header->height = kImageHeight;
+    header->step = kImageStep;
     std::strncpy(header->encoding, "bgr8", sizeof(header->encoding) - 1);
     header->encoding[sizeof(header->encoding) - 1] = '\0';
 
-    // 直接在共享内存 chunk 上创建 cv::Mat 并填充，不经过私有堆的 image
-    // 与原来的区别：原来 image(私有堆) → copyTo → chunk(共享内存)，现在直接写入 chunk
-    // 实际场景：相机回调直接写入 wrapper，完全跳过中间 buffer
     auto* img_data = reinterpret_cast<uint8_t*>(ptr) + sizeof(IceoryxImageHeader);
-    cv::Mat wrapper(image.rows, image.cols, image.type(), img_data);
-    wrapper.setTo(cv::Scalar(0, 0, 0));  // 直接填充共享内存（实际场景用 camera_frame.copyTo(wrapper)）
+    cv::Mat wrapper(kImageHeight, kImageWidth, CV_8UC3, img_data);
+
+    if (generate_in_transport_buffer_) {
+        // Direct path: the shared memory chunk itself backs the cv::Mat.
+        // Timestamp after fill so the metric starts at "publishable Mat ready".
+        wrapper.setTo(cv::Scalar(0, 0, 0));
+        image_ready_steady = std::chrono::steady_clock::now();
+    } else {
+        image.copyTo(wrapper);
+    }
+    header->stamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        image_ready_steady.time_since_epoch()).count();
 
     iceoryx_pub_->publish(ptr);
 }

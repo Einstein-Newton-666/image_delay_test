@@ -173,14 +173,10 @@ namespace shm_video_trans
                 return;
             }
             std::memcpy(frame_addres, frame.data, video_size_);
-            auto system_now = std::chrono::system_clock::now();
-            auto duration_since_epoch = system_now.time_since_epoch();
-            auto steady_point = std::chrono::steady_clock::time_point(std::chrono::duration_cast<std::chrono::steady_clock::duration>(duration_since_epoch));
-
-
+            // time_stamp is the benchmark start time from the publisher; write_time
+            // is only used by the receiver to detect that a new frame arrived.
             metadata->time_stamp = time_stamp;
-
-            metadata->write_time = steady_point;
+            metadata->write_time = steady_clock::now();
             metadata->mutex.unlock();
         }
 

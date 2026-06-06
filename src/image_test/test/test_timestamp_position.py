@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import unittest
+
+
+PACKAGE_DIR = Path(__file__).resolve().parents[1]
+PUB_SOURCE = (PACKAGE_DIR / "src" / "image_pub.cpp").read_text()
+SUB_SOURCE = (PACKAGE_DIR / "src" / "image_sub.cpp").read_text()
+
+
+def function_body(source: str, signature: str) -> str:
+    start = source.index(signature)
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace:index + 1]
+    raise AssertionError(f"Could not parse function body for {signature}")
+
+
+def block_from(source: str, marker: str) -> str:
+    start = source.index(marker)
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace:index + 1]
+    raise AssertionError(f"Could not parse block for {marker}")
+
+
+class TimestampPositionTest(unittest.TestCase):
+    def assert_before(self, body: str, first: str, second: str) -> None:
+        self.assertIn(first, body)
+        self.assertIn(second, body)
+        self.assertLess(body.index(first), body.index(second))
+
+    def test_modes_1_2_3_stamp_after_source_cvmat_is_ready(self) -> None:
+        body = function_body(PUB_SOURCE, "void image_pub::publish_image1()")
+
+        self.assert_before(
+            body,
+            "if (image.empty())",
+            "const auto image_ready_time = this->now();",
+        )
+        self.assert_before(
+            body,
+            "const auto image_ready_time = this->now();",
+            "switch (this->mode)",
+        )
+        self.assert_before(
+            body,
+            "const auto image_ready_steady = std::chrono::steady_clock::now();",
+            "switch (this->mode)",
+        )
+        self.assertIn("image_msg_->header.stamp  = image_ready_time;", body)
+        self.assertIn("sender->send(image, image_ready_steady);", body)
+        self.assertIn("ImagePack(std::move(image), image_ready_time)", body)
+
+    def test_mode_4_can_compare_direct_generation_and_copy_path(self) -> None:
+        body = function_body(PUB_SOURCE, "void image_pub::publish_image2()")
+        direct_body = block_from(body, "if (generate_in_transport_buffer_)")
+
+        self.assertIn("if (generate_in_transport_buffer_)", body)
+        self.assert_before(
+            body,
+            "if (!generate_in_transport_buffer_)",
+            "auto loanedMsg = loaned_img_pub_->borrow_loaned_message();",
+        )
+        self.assert_before(
+            body,
+            "image_ready_time = now();",
+            "auto loanedMsg = loaned_img_pub_->borrow_loaned_message();",
+        )
+        self.assert_before(
+            body,
+            "auto loanedMsg = loaned_img_pub_->borrow_loaned_message();",
+            "cv::Mat wrapper = prepare_image8m_payload(msg);",
+        )
+        self.assert_before(
+            direct_body,
+            "wrapper.setTo(cv::Scalar(0, 0, 0));",
+            "image_ready_time = now();",
+        )
+        self.assertEqual(body.count("msg.header.stamp = image_ready_time;"), 2)
+        self.assertEqual(body.count("wrapper.setTo(cv::Scalar(0, 0, 0));"), 2)
+        self.assertEqual(body.count("image.copyTo(wrapper);"), 2)
+        self.assert_before(
+            body,
+            "if (!generate_in_transport_buffer_)",
+            "image.copyTo(wrapper);",
+        )
+
+    def test_mode_5_can_compare_direct_generation_and_copy_path(self) -> None:
+        body = function_body(PUB_SOURCE, "void image_pub::publish_image_iceoryx()")
+        direct_body = block_from(body, "if (generate_in_transport_buffer_)")
+        copy_body = block_from(body, "if (!generate_in_transport_buffer_)")
+
+        self.assertIn("if (generate_in_transport_buffer_)", body)
+        self.assertIn("image.copyTo(wrapper);", body)
+        self.assert_before(
+            body,
+            "if (!generate_in_transport_buffer_)",
+            "auto result = iceoryx_pub_->loan",
+        )
+        self.assertIn("image_ready_steady = std::chrono::steady_clock::now();", copy_body)
+        self.assert_before(
+            body,
+            "auto result = iceoryx_pub_->loan",
+            "cv::Mat wrapper(kImageHeight, kImageWidth, CV_8UC3, img_data);",
+        )
+        self.assert_before(
+            body,
+            "cv::Mat wrapper(kImageHeight, kImageWidth, CV_8UC3, img_data);",
+            "wrapper.setTo(cv::Scalar(0, 0, 0));",
+        )
+        self.assert_before(
+            direct_body,
+            "wrapper.setTo(cv::Scalar(0, 0, 0));",
+            "image_ready_steady = std::chrono::steady_clock::now();",
+        )
+        self.assertIn("image_ready_steady.time_since_epoch()", body)
+
+    def test_transport_buffer_generation_is_launch_configurable(self) -> None:
+        body = function_body(PUB_SOURCE, "image_pub::image_pub")
+        launch_source = (PACKAGE_DIR / "launch" / "image_test.launch.py").read_text()
+
+        self.assertIn('declare_parameter("generate_in_transport_buffer", true)', body)
+        self.assertIn("generate_in_transport_buffer_", PUB_SOURCE)
+        self.assertIn("DeclareLaunchArgument(", launch_source)
+        self.assertIn("name='generate_in_transport_buffer'", launch_source)
+        self.assertIn("'generate_in_transport_buffer': LaunchConfiguration(", launch_source)
+
+    def test_shm_video_latency_uses_frame_start_timestamp(self) -> None:
+        body = function_body(SUB_SOURCE, "void image_sub::startShmVideoReceiver(bool copy_image)")
+
+        self.assertIn("now_time - receivedFrame.time_stamp", body)
+        self.assertNotIn("now_time - receivedFrame.write_time", body)
+
+
+if __name__ == "__main__":
+    unittest.main()

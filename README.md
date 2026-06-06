@@ -2,31 +2,39 @@
 
 对比测试多种图像传输方式和 RMW 配置的延迟和 CPU 占用率。
 
-测试平台：AMD Ryzen 7 5800H | 图像：1920x1024 CV_8UC3 (5.9MB) | 频率：200Hz
+测试平台：AMD Ryzen 7 5800H | WSL2 Linux 6.6.114.1 | 16 vCPU | /dev/shm 4.9G | 图像：1920x1024 CV_8UC3 (5.9MB) | 频率：200Hz
 
-## 全部测试结果汇总
+延迟口径：发布端可用 `cv::Mat` 到订阅端可用 `cv::Mat` 的端到端延迟。`generate_in_transport_buffer:=true` 时，mode=4/5 的发布端 `cv::Mat` 直接包装 loaned payload / iceoryx chunk，延迟不包含图像填充；`generate_in_transport_buffer:=false` 时，先生成普通 `cv::Mat`，再拷贝到 loaned payload / iceoryx chunk，延迟包含 loan、拷贝、publish/take。mode=1/2/3 仍从普通 `cv::Mat` 开始。
 
-| 传输方式 | RMW | mode | intra | 延迟 | CPU |
-| :--- | :--- | :---: | :---: | :---: | :---: |
-| UltraMultiThread | - | 3 | - | **0.04~0.09ms** | 0.3% |
-| iceoryx 直接通信 | - | 5 | - | **0.2~0.4ms** | 8% |
-| shm_video_transmission | - | 2 | - | 1.3~2.0ms | 9% |
-| loaned msg + shm_msg | FastDDS | 4 | False | 1.5~2.5ms | 8% |
-| ros2 image_transport | FastDDS | 1 | False | 2.5~3.5ms | 16% |
-| loaned msg + shm_msg | rmw_zenoh_shm | 4 | False | 2.3~2.9ms | - |
-| ros2 image_transport | FastDDS | 1 | **True** | 4.0~4.6ms | - |
-| ros2 image_transport | rmw_zenoh_shm | 1 | **True** | 4.1~4.7ms | - |
-| ros2 image_transport | rmw_zenoh | 1 | **True** | 4.3~5.0ms | - |
-| loaned msg + shm_msg | rmw_zenoh | 4 | False | 10~11ms | - |
-| loaned msg + shm_msg | rmw_iceoryx_cpp | 4 | False | 20~24ms / 崩溃 | - |
+CPU 口径：`component_container` 进程级平均 CPU，占 all-core / one-core；包含图像填充、发布、订阅、回调和日志开销，不是仅传输函数局部 CPU。
+
+## 测试结果汇总（2026-06-06 统一重测）
+
+所有结果均使用当前代码、200Hz、8s、`queue_size:=1` 重测；旧口径、补充结果、无效配置、fallback 和官方不支持 loaned API 的 mode=4 组合不再单独列出。mode=4 的 `loan` 列来自运行日志中的 `mode 4 loaned image messages`。
+
+| 传输方式 | RMW / 配置 | mode | intra | loan | 延迟 p50 / p95 | CPU 均值 all / one-core | 备注 |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| UltraMultiThread | - | 3 | - | - | **0.076 / 0.165ms** | 2.22% / 35.51% | 源 Mat 可用后移交 ImagePack |
+| iceoryx 直接通信 | - | 5 | - | - | **0.110 / 0.188ms** | 1.83% / 29.32% | `generate_in_transport_buffer=true`，直接在 iceoryx chunk 生成图像 |
+| iceoryx 直接通信 | - | 5 | - | - | **0.760 / 1.044ms** | 2.48% / 39.73% | `generate_in_transport_buffer=false`，源 Mat copy 到 iceoryx chunk |
+| shm_video_transmission | - | 2 | - | - | **1.588 / 3.272ms** | 3.99% / 63.75% | 源 Mat memcpy 到共享内存 |
+| loaned API + shm_msg | FastDDS + `shm_fastdds.xml` | 4 | False | enabled | 2.301 / 3.135ms | 4.10% / 65.53% | `generate_in_transport_buffer=true`，直接在 payload 生成图像 |
+| loaned API + shm_msg | FastDDS + `shm_fastdds.xml` | 4 | False | enabled | 4.141 / 6.487ms | 5.97% / 95.45% | `generate_in_transport_buffer=false`，源 Mat copy 到 payload |
+| ros2 image_transport | FastDDS | 1 | False | - | 4.457 / 9.706ms | 6.03% / 96.53% | 跨进程 DDS |
+| ros2 image_transport | rmw_zenoh_shm | 1 | True | - | 5.263 / 10.034ms | 6.01% / 96.20% | 单进程 intra |
+| ros2 image_transport | rmw_zenoh | 1 | True | - | 6.324 / 13.973ms | 6.07% / 97.14% | 单进程 intra |
+| ros2 image_transport | FastDDS | 1 | True | - | 6.607 / 13.759ms | 6.21% / 99.31% | 单进程 intra |
+| ros2 image_transport | rmw_iceoryx_cpp | 1 | False | - | 73.584 / 139.597ms | 5.42% / 86.80% | 仅 69 samples，作为 ROS RMW 不稳定 |
 
 ### 关键结论
 
-- **最快跨进程方案**：mode=5 iceoryx 直接通信 (0.2-0.4ms)，绕过整个 ROS 2 中间件栈
-- **最快 ROS 2 RMW**：FastDDS 默认 (1.5-2.5ms)
-- **intra-process 无帮助**：启用后所有 RMW 延迟趋同 ~4-5ms，且与 loaned msg 不兼容
-- **rmw_iceoryx_cpp 不可用**：大图像消息延迟 20ms+，且会崩溃
-- **rmw_zenoh_shm 接近 FastDDS**：2.3-2.9ms，但需要额外启动 Zenoh router
+- **mode=4 只保留真正 loaned API 结果**：FastDDS 必须加载 `src/ros2_shm_msgs/config/shm_fastdds.xml` 并设置 `RMW_FASTRTPS_USE_QOS_FROM_XML=1`，发布端 `can_loan_messages()` 为 true。
+- **Zenoh SHM 不是 ROS 2 loaned API**：官方 `rmw_zenoh` 不支持 `rmw_borrow_loaned_message()`，因此 Zenoh 的 mode=4 结果不再作为 loaned API 测试项列入表格。
+- **rmw_iceoryx_cpp 作为 ROS RMW 表现较差**：mode=1 普通 `image_transport` 仅收到 69 samples，p50 约 73.6ms；其 mode=4 结果属于不支持/不稳定的 loaned API 测试项，不列入表格。
+- **共享内存 copy 成本可直接对比**：mode=5 direct/copy p50 为 0.110ms / 0.760ms；mode=4 direct/copy p50 为 2.301ms / 4.141ms。
+- **最快 IPC/传输路径**：mode=3、mode=5 direct、mode=5 copy、mode=2 的 p50 分别为 0.076ms、0.110ms、0.760ms、1.588ms。
+- **intra-process 只适合同进程组件**：mode=1 intra-process p50 约 5.26-6.61ms，不是跨进程 IPC 结果。
+- **WSL2 结果只代表当前环境**：线程调度、优先级设置和共享内存实现都可能与原生 Linux 不同。
 
 ## 运行方式
 
@@ -37,28 +45,42 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 # mode=1~4（默认 DDS）
 ros2 launch image_test image_test.launch.py mode:=1 image_pub_frequency:=200
 
+# mode=4/5 对比图像生成位置
+# true：直接在 loaned payload / iceoryx chunk 中生成图像
+# false：先生成普通 cv::Mat，再 copy 到 loaned payload / iceoryx chunk
+ros2 launch image_test image_test.launch.py mode:=4 generate_in_transport_buffer:=true
+ros2 launch image_test image_test.launch.py mode:=4 generate_in_transport_buffer:=false
+
 # mode=5（需要先启动 RouDi）
 /opt/ros/humble/bin/iox-roudi -c roudi_config.toml &
 unset RMW_IMPLEMENTATION
-ros2 launch image_test image_test.launch.py mode:=5 image_pub_frequency:=200
+ros2 launch image_test image_test.launch.py mode:=5 image_pub_frequency:=200 generate_in_transport_buffer:=true
 ```
 
 ## RMW 切换
 
 ```bash
-# FastDDS（默认，无需设置）
+# FastDDS（默认配置，不开启 loaned/DataSharing）
 unset RMW_IMPLEMENTATION
+
+# FastDDS loaned/DataSharing（ros2_shm_msgs 推荐配置）
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export FASTRTPS_DEFAULT_PROFILES_FILE=/home/gaoyuan/image_delay_test/src/ros2_shm_msgs/config/shm_fastdds.xml
+export RMW_FASTRTPS_USE_QOS_FROM_XML=1
+unset ROS_DISABLE_LOANED_MESSAGES
 
 # rmw_zenoh + 共享内存
 sudo apt install ros-humble-rmw-zenoh-cpp
 export RMW_IMPLEMENTATION=rmw_zenoh_cpp
-export ZENOH_CONFIG_OVERRIDE='transport/link/shared_memory/enabled=true'
+export ZENOH_CONFIG_OVERRIDE='transport/shared_memory/enabled=true'
 ros2 daemon stop
 ros2 run rmw_zenoh_cpp rmw_zenohd &
 
 # rmw_iceoryx_cpp（从源码编译，不推荐）
 colcon build --symlink-install --packages-select rmw_iceoryx_cpp --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 export RMW_IMPLEMENTATION=rmw_iceoryx_cpp
+# 需要先启动 RouDi
+/opt/ros/humble/bin/iox-roudi -c /home/gaoyuan/image_delay_test/roudi_config.toml &
 ```
 
 ## 优化措施
@@ -67,16 +89,18 @@ export RMW_IMPLEMENTATION=rmw_iceoryx_cpp
 |------|---------|------|
 | 预分配 cv::Mat（避免每帧 malloc） | 1/2/3 | 降低 0.3-0.8ms |
 | 修复 toCvShare 编码不匹配 | 1 | 降低 1.5-3.0ms |
-| 直接写入 loaned 消息 buffer | 4 | 降低 1.0-2.0ms |
+| 检查 `can_loan_messages()` | 4 | 确认结果是真正 loaned buffer |
 | move 语义避免 ImagePack 拷贝 | 3 | 降低 1.0-2.0ms |
-| 零拷贝 wrapper（直接写入共享内存） | 5 | 消除中间 buffer |
+| 零拷贝 wrapper（直接写入目标 buffer） | 4/5 | 消除普通 Mat 到共享内存/loaned payload 的中间拷贝 |
+| 目标 `cv::Mat` 可用后打时间戳 | 4/5 | 统计目标 buffer 可用到订阅端可用的路径，排除图像填充 |
+| 源 `cv::Mat` 可用后打时间戳 | 1/2/3，4/5 copy | 统计源 Mat 到订阅端可用路径，包含消息创建、拷贝和 publish/take |
 | -O3 -march=native 编译优化 | 全部 | 降低 0.1-0.3ms |
 
 ## 为什么 ROS 2 共享内存延迟大
 
 ```
-mode=4: 应用 → rclcpp → rmw → DDS → 序列化 → 共享内存 → 反序列化 → DDS → rmw → rclcpp → 应用  (2-5ms)
-mode=5: 应用 → iceoryx → 共享内存 → iceoryx → 应用  (0.2-0.4ms)
+mode=4 FastDDS loaned: shm_fastdds.xml + RMW_FASTRTPS_USE_QOS_FROM_XML=1 → rclcpp::LoanedMessage 可用  (~2ms)
+mode=5: 应用 → iceoryx → 共享内存 → iceoryx → 应用  (~0.1ms)
 ```
 
 ## 进一步优化方向
