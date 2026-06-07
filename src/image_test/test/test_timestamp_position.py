@@ -141,6 +141,39 @@ class TimestampPositionTest(unittest.TestCase):
         self.assertIn("name='generate_in_transport_buffer'", launch_source)
         self.assertIn("'generate_in_transport_buffer': LaunchConfiguration(", launch_source)
 
+    def test_mode_6_uses_rclcpp_unique_ptr_intra_process_path(self) -> None:
+        pub_constructor = function_body(PUB_SOURCE, "image_pub::image_pub")
+        sub_constructor = function_body(SUB_SOURCE, "image_sub::image_sub")
+        pub_body = function_body(PUB_SOURCE, "void image_pub::publish_image_unique()")
+        sub_body = function_body(SUB_SOURCE, "void image_sub::uniqueImageCallback")
+
+        self.assertIn("case 6:", pub_constructor)
+        self.assertIn("case 6:", sub_constructor)
+        self.assertIn("create_publisher<sensor_msgs::msg::Image>", pub_constructor)
+        self.assertIn('"image_raw_unique"', pub_constructor)
+        self.assertIn(
+            "std::make_unique<sensor_msgs::msg::Image>()",
+            pub_body,
+        )
+        self.assertIn("raw_img_pub_->publish(std::move(msg));", pub_body)
+        self.assertIn(
+            "sensor_msgs::msg::Image::UniquePtr img_msg",
+            SUB_SOURCE,
+        )
+        self.assertIn("uniqueImageCallback", sub_constructor)
+        self.assertIn("cv::Mat received_image", sub_body)
+        self.assertIn("msg->data.resize(kImagePayloadSize);", pub_body)
+        self.assertIn("msg->data.data()", pub_body)
+        self.assertIn("if (!generate_in_transport_buffer_)", pub_body)
+        self.assertIn("if (generate_in_transport_buffer_)", pub_body)
+        self.assertIn("image.copyTo(wrapper);", pub_body)
+        self.assert_before(
+            pub_body,
+            "if (!generate_in_transport_buffer_)",
+            "auto msg = std::make_unique<sensor_msgs::msg::Image>();",
+        )
+        self.assertIn("img_msg->step", sub_body)
+
     def test_shm_video_latency_uses_frame_start_timestamp(self) -> None:
         body = function_body(SUB_SOURCE, "void image_sub::startShmVideoReceiver(bool copy_image)")
 

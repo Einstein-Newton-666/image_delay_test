@@ -36,7 +36,8 @@ def generate_launch_description():
             name='use_intra_process_comms',
             default_value='false'),
         # 1: ros2 image_transport, 2: shm_video_transmission,
-        # 3: UltraMultiThread, 4: Loaned msg + shm_msg, 5: iceoryx direct.
+        # 3: UltraMultiThread, 4: Loaned msg + shm_msg, 5: iceoryx direct,
+        # 6: raw rclcpp unique_ptr image.
         ComposableNodeContainer(
             name='image_test',
             namespace='',

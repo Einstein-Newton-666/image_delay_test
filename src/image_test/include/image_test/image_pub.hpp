@@ -41,10 +41,14 @@ namespace image_test{
 
         void publish_image_iceoryx();
 
+        void publish_image_unique();
+
     private:
         sensor_msgs::msg::Image::SharedPtr image_msg_;
 
         image_transport::Publisher img_pub_;
+
+        rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr raw_img_pub_;
 
         rclcpp::Publisher<shm_msgs::msg::Image8m>::SharedPtr loaned_img_pub_;
 

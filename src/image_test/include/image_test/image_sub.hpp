@@ -57,6 +57,8 @@ namespace image_test{
 
         void imageCallback2(const sensor_msgs::msg::Image::ConstSharedPtr img_msg);
 
+        void uniqueImageCallback(sensor_msgs::msg::Image::UniquePtr img_msg);
+
         void shmImageCallback(const shm_msgs::msg::Image8m::SharedPtr img_msg);
     };
 

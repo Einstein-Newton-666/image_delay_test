@@ -63,6 +63,14 @@ image_pub::image_pub(const rclcpp::NodeOptions & options = rclcpp::NodeOptions()
             std::bind(&image_pub::publish_image_iceoryx,this)
         );
         break;
+    case 6:
+        raw_img_pub_ = this->create_publisher<sensor_msgs::msg::Image>(
+            "image_raw_unique", rclcpp::SensorDataQoS());
+        image_launcher = this->create_wall_timer(
+            std::chrono::milliseconds(int(1000/image_pub_frequency)),
+            std::bind(&image_pub::publish_image_unique,this)
+        );
+        break;
     default:
         image_launcher = this->create_wall_timer(
             std::chrono::milliseconds(int(1000/image_pub_frequency)),
@@ -223,6 +231,41 @@ void image_pub::publish_image_iceoryx(){
         image_ready_steady.time_since_epoch()).count();
 
     iceoryx_pub_->publish(ptr);
+}
+
+void image_pub::publish_image_unique(){
+    rclcpp::Time image_ready_time;
+    if (!generate_in_transport_buffer_) {
+        if (image.empty()) {
+            image = cv::Mat(kImageHeight, kImageWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+        } else {
+            image.setTo(cv::Scalar(0, 0, 0));
+        }
+        image_ready_time = this->now();
+    }
+
+    auto msg = std::make_unique<sensor_msgs::msg::Image>();
+    msg->height = kImageHeight;
+    msg->width = kImageWidth;
+    msg->encoding = "bgr8";
+    msg->is_bigendian = 0;
+    msg->step = kImageStep;
+    msg->data.resize(kImagePayloadSize);
+
+    // rclcpp intra-process can transfer this unique_ptr without converting it
+    // through image_transport. The payload still belongs to the ROS message.
+    cv::Mat wrapper(kImageHeight, kImageWidth, CV_8UC3, msg->data.data(), msg->step);
+    if (generate_in_transport_buffer_) {
+        wrapper.setTo(cv::Scalar(0, 0, 0));
+        image_ready_time = this->now();
+    } else {
+        image.copyTo(wrapper);
+    }
+
+    msg->header.frame_id = "camera_optical_frame";
+    msg->header.stamp = image_ready_time;
+
+    raw_img_pub_->publish(std::move(msg));
 }
 
 #include "rclcpp_components/register_node_macro.hpp"

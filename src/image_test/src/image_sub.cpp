@@ -47,6 +47,11 @@ Node("image_sub_node",options)
         startIceoryxReceiver();
         break;
     }
+    case 6:
+        img_sub_ =  this->create_subscription<sensor_msgs::msg::Image>(
+            "/image_raw_unique", rclcpp::SensorDataQoS().keep_last(queue_size),
+            std::bind(&image_sub::uniqueImageCallback, this, std::placeholders::_1));
+        break;
     default:
         break;
     }
@@ -164,6 +169,18 @@ void image_sub::imageCallback1(const sensor_msgs::msg::Image::ConstSharedPtr img
 
 void image_sub::imageCallback2(const sensor_msgs::msg::Image::ConstSharedPtr img_msg){
     auto image = cv_bridge::toCvCopy(img_msg)->image;
+    auto t1 =this->now();
+    auto latency = (t1 - img_msg->header.stamp).seconds() * 1000;
+    RCLCPP_INFO_STREAM(this->get_logger(), std::to_string(latency) + "ms");
+}
+
+void image_sub::uniqueImageCallback(sensor_msgs::msg::Image::UniquePtr img_msg){
+    cv::Mat received_image(
+        img_msg->height,
+        img_msg->width,
+        CV_8UC3,
+        img_msg->data.data(),
+        img_msg->step);
     auto t1 =this->now();
     auto latency = (t1 - img_msg->header.stamp).seconds() * 1000;
     RCLCPP_INFO_STREAM(this->get_logger(), std::to_string(latency) + "ms");

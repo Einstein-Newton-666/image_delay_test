@@ -4,11 +4,11 @@
 
 测试平台：AMD Ryzen 7 5800H | WSL2 Linux 6.6.114.1 | 16 vCPU | /dev/shm 4.9G | 图像：1920x1024 CV_8UC3 (5.9MB) | 频率：200Hz
 
-延迟口径：发布端可用 `cv::Mat` 到订阅端可用 `cv::Mat` 的端到端延迟。`generate_in_transport_buffer:=true` 时，mode=4/5 的发布端 `cv::Mat` 直接包装 loaned payload / iceoryx chunk，延迟不包含图像填充；`generate_in_transport_buffer:=false` 时，先生成普通 `cv::Mat`，再拷贝到 loaned payload / iceoryx chunk，延迟包含 loan、拷贝、publish/take。mode=1/2/3 仍从普通 `cv::Mat` 开始。
+延迟口径：发布端可用 `cv::Mat` 到订阅端可用 `cv::Mat` 的端到端延迟。`generate_in_transport_buffer:=true` 时，mode=4/5/6 的发布端 `cv::Mat` 直接包装 loaned payload / iceoryx chunk / ROS Image data，延迟不包含图像填充；`generate_in_transport_buffer:=false` 时，先生成普通 `cv::Mat`，再拷贝到 loaned payload / iceoryx chunk / ROS Image data，延迟包含 loan/分配、拷贝、publish/take。mode=1/2/3 仍从普通 `cv::Mat` 开始。
 
 CPU 口径：`component_container` 进程级平均 CPU，占 all-core / one-core；包含图像填充、发布、订阅、回调和日志开销，不是仅传输函数局部 CPU。
 
-## 测试结果汇总（2026-06-06 统一重测）
+## 测试结果汇总（2026-06-06 统一重测，mode=6 于 2026-06-07 补测）
 
 所有结果均使用当前代码、200Hz、8s、`queue_size:=1` 重测；旧口径、补充结果、无效配置、fallback 和官方不支持 loaned API 的 mode=4 组合不再单独列出。mode=4 的 `loan` 列来自运行日志中的 `mode 4 loaned image messages`。
 
@@ -16,8 +16,10 @@ CPU 口径：`component_container` 进程级平均 CPU，占 all-core / one-core
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
 | UltraMultiThread | - | 3 | - | - | **0.076 / 0.165ms** | 2.22% / 35.51% | 源 Mat 可用后移交 ImagePack |
 | iceoryx 直接通信 | - | 5 | - | - | **0.110 / 0.188ms** | 1.83% / 29.32% | `generate_in_transport_buffer=true`，直接在 iceoryx chunk 生成图像 |
+| raw rclcpp Image | FastDDS | 6 | True | - | **0.121 / 0.222ms** | 2.66% / 42.59% | `generate_in_transport_buffer=true`，同进程 `unique_ptr` intra-process，1605 samples |
 | iceoryx 直接通信 | - | 5 | - | - | **0.760 / 1.044ms** | 2.48% / 39.73% | `generate_in_transport_buffer=false`，源 Mat copy 到 iceoryx chunk |
 | shm_video_transmission | - | 2 | - | - | **1.588 / 3.272ms** | 3.99% / 63.75% | 源 Mat memcpy 到共享内存 |
+| raw rclcpp Image | FastDDS | 6 | True | - | 1.707 / 2.082ms | 3.31% / 52.98% | `generate_in_transport_buffer=false`，普通源 Mat copy 到 ROS Image data，1458 samples |
 | loaned API + shm_msg | FastDDS + `shm_fastdds.xml` | 4 | False | enabled | 2.301 / 3.135ms | 4.10% / 65.53% | `generate_in_transport_buffer=true`，直接在 payload 生成图像 |
 | loaned API + shm_msg | FastDDS + `shm_fastdds.xml` | 4 | False | enabled | 4.141 / 6.487ms | 5.97% / 95.45% | `generate_in_transport_buffer=false`，源 Mat copy 到 payload |
 | ros2 image_transport | FastDDS | 1 | False | - | 4.457 / 9.706ms | 6.03% / 96.53% | 跨进程 DDS |
@@ -32,7 +34,8 @@ CPU 口径：`component_container` 进程级平均 CPU，占 all-core / one-core
 - **Zenoh SHM 不是 ROS 2 loaned API**：官方 `rmw_zenoh` 不支持 `rmw_borrow_loaned_message()`，因此 Zenoh 的 mode=4 结果不再作为 loaned API 测试项列入表格。
 - **rmw_iceoryx_cpp 作为 ROS RMW 表现较差**：mode=1 普通 `image_transport` 仅收到 69 samples，p50 约 73.6ms；其 mode=4 结果属于不支持/不稳定的 loaned API 测试项，不列入表格。
 - **共享内存 copy 成本可直接对比**：mode=5 direct/copy p50 为 0.110ms / 0.760ms；mode=4 direct/copy p50 为 2.301ms / 4.141ms。
-- **最快 IPC/传输路径**：mode=3、mode=5 direct、mode=5 copy、mode=2 的 p50 分别为 0.076ms、0.110ms、0.760ms、1.588ms。
+- **最快 IPC/传输路径**：mode=3、mode=5 direct、mode=6 direct、mode=5 copy、mode=2、mode=6 copy 的 p50 分别为 0.076ms、0.110ms、0.121ms、0.760ms、1.588ms、1.707ms。
+- **mode=6 是同进程 unique_ptr 基线**：不经过 `image_transport`，也不是共享内存 IPC；`generate_in_transport_buffer=true` 测相机直接写 ROS Image data，`false` 测普通相机 Mat copy 到 ROS Image data。
 - **intra-process 只适合同进程组件**：mode=1 intra-process p50 约 5.26-6.61ms，不是跨进程 IPC 结果。
 - **WSL2 结果只代表当前环境**：线程调度、优先级设置和共享内存实现都可能与原生 Linux 不同。
 
@@ -44,6 +47,10 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 # mode=1~4（默认 DDS）
 ros2 launch image_test image_test.launch.py mode:=1 image_pub_frequency:=200
+
+# mode=6（同进程 rclcpp unique_ptr，不经过 image_transport）
+ros2 launch image_test image_test.launch.py mode:=6 use_intra_process_comms:=true image_pub_frequency:=200 generate_in_transport_buffer:=true
+ros2 launch image_test image_test.launch.py mode:=6 use_intra_process_comms:=true image_pub_frequency:=200 generate_in_transport_buffer:=false
 
 # mode=4/5 对比图像生成位置
 # true：直接在 loaned payload / iceoryx chunk 中生成图像
