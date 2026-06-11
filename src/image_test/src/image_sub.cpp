@@ -11,6 +11,10 @@ Node("image_sub_node",options)
 {   
     auto copy_image = this->declare_parameter("copy_image", false);
     auto queue_size = this->declare_parameter("queue_size", 5);
+    const auto autoaim_shm_name = this->declare_parameter(
+        "autoaim_shm_name", std::string("/image_test_autoaim_shm_ring"));
+    const bool autoaim_shm_lock_memory = this->declare_parameter(
+        "autoaim_shm_lock_memory", true);
     int mode = this->declare_parameter("mode", 1);
     switch (mode)
     {
@@ -52,6 +56,12 @@ Node("image_sub_node",options)
             "/image_raw_unique", rclcpp::SensorDataQoS().keep_last(queue_size),
             std::bind(&image_sub::uniqueImageCallback, this, std::placeholders::_1));
         break;
+    case 7:
+        autoaim_shm_subscriber_ =
+            std::make_unique<autoaim_shm_image_transport::AutoAimShmImageSubscriber>(
+            autoaim_shm_name, -1, autoaim_shm_lock_memory);
+        startAutoAimShmReceiver(copy_image);
+        break;
     default:
         break;
     }
@@ -59,6 +69,9 @@ Node("image_sub_node",options)
 
 image_sub::~image_sub(){
     running_.store(false);
+    if (autoaim_shm_subscriber_) {
+        autoaim_shm_subscriber_->stop();
+    }
     for (auto & thread : worker_threads_) {
         if (thread.joinable()) {
             thread.join();
@@ -151,6 +164,29 @@ void image_sub::startIceoryxReceiver()
             RCLCPP_INFO_STREAM(this->get_logger(), std::to_string(latency_ms) + "ms");
 
             sub.release(ptr);
+        }
+    });
+}
+
+void image_sub::startAutoAimShmReceiver(bool copy_image)
+{
+    worker_threads_.emplace_back([this, copy_image]() {
+        if (!autoaim_shm_subscriber_->attach()) {
+            return;
+        }
+        while (
+            running_.load() &&
+            !autoaim_shm_subscriber_->is_shutdown() &&
+            !autoaim_shm_subscriber_->is_stopped())
+        {
+            auto frame = autoaim_shm_subscriber_->wait_for_frame(copy_image);
+            if (!running_.load() || !frame.valid) {
+                continue;
+            }
+            cv::Mat received_image = frame.image;
+            const auto now_ns = autoaim_shm_image_transport::autoaim_shm_steady_time_ns();
+            const auto latency_ms = static_cast<double>(now_ns - frame.publish_time_ns) / 1e6;
+            RCLCPP_INFO_STREAM(this->get_logger(), std::to_string(latency_ms) + "ms");
         }
     });
 }

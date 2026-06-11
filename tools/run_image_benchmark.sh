@@ -92,48 +92,71 @@ setsid ros2 launch image_test image_test.launch.py \
   > "${LAUNCH_LOG}" 2>&1 &
 LAUNCH_PID="$!"
 
-CONTAINER_PID=""
+CONTAINER_PIDS=()
 for _ in $(seq 1 80); do
-  CONTAINER_PID="$(pgrep -n -f 'rclcpp_components.*component_container' || true)"
-  if [[ -n "${CONTAINER_PID}" ]]; then
+  mapfile -t CONTAINER_PIDS < <(pgrep -f 'rclcpp_components.*component_container' || true)
+  if (( ${#CONTAINER_PIDS[@]} > 0 )); then
     break
   fi
   sleep 0.1
 done
 
-echo "timestamp,pid,cpu_percent_one_core,cpu_percent_all_cores,rss_kb" > "${CPU_LOG}"
-if [[ -n "${CONTAINER_PID}" ]]; then
+echo "timestamp,pids,cpu_percent_one_core,cpu_percent_all_cores,rss_kb" > "${CPU_LOG}"
+if (( ${#CONTAINER_PIDS[@]} > 0 )); then
   CLK_TCK="$(getconf CLK_TCK)"
   NCPU="$(nproc)"
-  PREV_TOTAL=""
-  PREV_TIME=""
+  declare -A PREV_TOTAL_BY_PID=()
+  declare -A PREV_TIME_BY_PID=()
   END_TIME=$((SECONDS + DURATION))
   while (( SECONDS < END_TIME )); do
-    if [[ ! -r "/proc/${CONTAINER_PID}/stat" ]]; then
+    mapfile -t CONTAINER_PIDS < <(pgrep -f 'rclcpp_components.*component_container' || true)
+    if (( ${#CONTAINER_PIDS[@]} == 0 )); then
       break
     fi
-    STAT_CONTENT="$(cat "/proc/${CONTAINER_PID}/stat")"
-    REST="${STAT_CONTENT##*) }"
-    UTIME="$(awk '{print $12}' <<< "${REST}")"
-    STIME="$(awk '{print $13}' <<< "${REST}")"
-    TOTAL_TICKS=$((UTIME + STIME))
     NOW_NS="$(date +%s%N)"
-    RSS_KB="$(awk '/VmRSS:/ {print $2}' "/proc/${CONTAINER_PID}/status" 2>/dev/null || echo 0)"
-    CPU_ONE_CORE="0"
-    CPU_ALL_CORES="0"
-    if [[ -n "${PREV_TOTAL}" ]]; then
-      DELTA_TICKS=$((TOTAL_TICKS - PREV_TOTAL))
-      DELTA_NS=$((NOW_NS - PREV_TIME))
-      if (( DELTA_NS > 0 )); then
-        CPU_ONE_CORE="$(awk -v dt="${DELTA_TICKS}" -v hz="${CLK_TCK}" -v dns="${DELTA_NS}" \
-          'BEGIN { printf "%.2f", (dt / hz) / (dns / 1000000000.0) * 100.0 }')"
-        CPU_ALL_CORES="$(awk -v cpu="${CPU_ONE_CORE}" -v ncpu="${NCPU}" \
-          'BEGIN { printf "%.2f", cpu / ncpu }')"
+    CPU_ONE_CORE="0.00"
+    CPU_ALL_CORES="0.00"
+    RSS_KB=0
+    ACTIVE_PIDS=()
+
+    for PID in "${CONTAINER_PIDS[@]}"; do
+      if [[ ! -r "/proc/${PID}/stat" ]]; then
+        continue
       fi
+      STAT_CONTENT="$(cat "/proc/${PID}/stat")"
+      REST="${STAT_CONTENT##*) }"
+      UTIME="$(awk '{print $12}' <<< "${REST}")"
+      STIME="$(awk '{print $13}' <<< "${REST}")"
+      TOTAL_TICKS=$((UTIME + STIME))
+      ACTIVE_PIDS+=("${PID}")
+      RSS_VALUE="$(awk '/VmRSS:/ {print $2}' "/proc/${PID}/status" 2>/dev/null || echo 0)"
+      RSS_KB=$((RSS_KB + RSS_VALUE))
+
+      PREV_TOTAL="${PREV_TOTAL_BY_PID[${PID}]:-}"
+      PREV_TIME="${PREV_TIME_BY_PID[${PID}]:-}"
+      if [[ -n "${PREV_TOTAL}" ]]; then
+        DELTA_TICKS=$((TOTAL_TICKS - PREV_TOTAL))
+        DELTA_NS=$((NOW_NS - PREV_TIME))
+        if (( DELTA_NS > 0 )); then
+          PID_CPU_ONE="$(awk -v dt="${DELTA_TICKS}" -v hz="${CLK_TCK}" -v dns="${DELTA_NS}" \
+            'BEGIN { printf "%.2f", (dt / hz) / (dns / 1000000000.0) * 100.0 }')"
+          PID_CPU_ALL="$(awk -v cpu="${PID_CPU_ONE}" -v ncpu="${NCPU}" \
+            'BEGIN { printf "%.2f", cpu / ncpu }')"
+          CPU_ONE_CORE="$(awk -v a="${CPU_ONE_CORE}" -v b="${PID_CPU_ONE}" \
+            'BEGIN { printf "%.2f", a + b }')"
+          CPU_ALL_CORES="$(awk -v a="${CPU_ALL_CORES}" -v b="${PID_CPU_ALL}" \
+            'BEGIN { printf "%.2f", a + b }')"
+        fi
+      fi
+      PREV_TOTAL_BY_PID["${PID}"]="${TOTAL_TICKS}"
+      PREV_TIME_BY_PID["${PID}"]="${NOW_NS}"
+    done
+
+    if (( ${#ACTIVE_PIDS[@]} == 0 )); then
+      break
     fi
-    echo "$(date +%s.%N),${CONTAINER_PID},${CPU_ONE_CORE},${CPU_ALL_CORES},${RSS_KB}" >> "${CPU_LOG}"
-    PREV_TOTAL="${TOTAL_TICKS}"
-    PREV_TIME="${NOW_NS}"
+    PIDS_FIELD="$(IFS=';'; echo "${ACTIVE_PIDS[*]}")"
+    echo "$(date +%s.%N),${PIDS_FIELD},${CPU_ONE_CORE},${CPU_ALL_CORES},${RSS_KB}" >> "${CPU_LOG}"
     sleep 0.5
   done
 fi

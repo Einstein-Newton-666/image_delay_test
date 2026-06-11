@@ -24,6 +24,10 @@ image_pub::image_pub(const rclcpp::NodeOptions & options = rclcpp::NodeOptions()
     // true: create the test image directly in the transport-owned buffer.
     // false: create a normal cv::Mat first, then copy it into the transport buffer.
     generate_in_transport_buffer_ = this->declare_parameter("generate_in_transport_buffer", true);
+    const auto autoaim_shm_name = this->declare_parameter(
+        "autoaim_shm_name", std::string("/image_test_autoaim_shm_ring"));
+    const bool autoaim_shm_lock_memory = this->declare_parameter(
+        "autoaim_shm_lock_memory", true);
 
     int image_pub_frequency = this->declare_parameter("image_pub_frequency", 200);
 
@@ -69,6 +73,15 @@ image_pub::image_pub(const rclcpp::NodeOptions & options = rclcpp::NodeOptions()
         image_launcher = this->create_wall_timer(
             std::chrono::milliseconds(int(1000/image_pub_frequency)),
             std::bind(&image_pub::publish_image_unique,this)
+        );
+        break;
+    case 7:
+        autoaim_shm_publisher_ =
+            std::make_unique<autoaim_shm_image_transport::AutoAimShmImagePublisher>(
+            autoaim_shm_name, autoaim_shm_lock_memory);
+        image_launcher = this->create_wall_timer(
+            std::chrono::milliseconds(int(1000/image_pub_frequency)),
+            std::bind(&image_pub::publish_image_autoaim_shm,this)
         );
         break;
     default:
@@ -266,6 +279,18 @@ void image_pub::publish_image_unique(){
     msg->header.stamp = image_ready_time;
 
     raw_img_pub_->publish(std::move(msg));
+}
+
+void image_pub::publish_image_autoaim_shm(){
+    if (image.empty()) {
+        image = cv::Mat(kImageHeight, kImageWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+    } else {
+        image.setTo(cv::Scalar(0, 0, 0));
+    }
+
+    const auto image_ready_steady_ns =
+        autoaim_shm_image_transport::autoaim_shm_steady_time_ns();
+    autoaim_shm_publisher_->publish(image, image_ready_steady_ns);
 }
 
 #include "rclcpp_components/register_node_macro.hpp"

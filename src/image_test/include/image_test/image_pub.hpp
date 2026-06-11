@@ -10,6 +10,7 @@
 #include <cv_bridge/cv_bridge.h>
 #include <rclcpp/duration.hpp>
 
+#include "autoaim_shm_image_transport/autoaim_shm_image_transport.hpp"
 #include "shm_video_transmission/shm_video_transmission.h"
 #include <umt/umt.hpp>
 #include "shm_msgs/msg/image.hpp"
@@ -43,6 +44,8 @@ namespace image_test{
 
         void publish_image_unique();
 
+        void publish_image_autoaim_shm();
+
     private:
         sensor_msgs::msg::Image::SharedPtr image_msg_;
 
@@ -74,6 +77,8 @@ namespace image_test{
 
         // iceoryx 直接通信
         std::unique_ptr<iox::popo::UntypedPublisher> iceoryx_pub_;
+
+        std::unique_ptr<autoaim_shm_image_transport::AutoAimShmImagePublisher> autoaim_shm_publisher_;
 
     };
 }

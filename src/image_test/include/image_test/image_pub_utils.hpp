@@ -7,17 +7,18 @@
 #include <cstdint>
 #include <string>
 
+#include "autoaim_shm_image_transport/image_constants.hpp"
 #include "shm_msgs/array_helper.hpp"
 #include "shm_msgs/msg/image.hpp"
 
 namespace image_test
 {
 
-constexpr uint32_t kImageWidth = 1920;
-constexpr uint32_t kImageHeight = 1024;
-constexpr uint32_t kImageChannels = 3;
-constexpr uint32_t kImageStep = kImageWidth * kImageChannels;
-constexpr size_t kImagePayloadSize = static_cast<size_t>(kImageHeight) * kImageStep;
+using autoaim_shm_image_transport::kImageChannels;
+using autoaim_shm_image_transport::kImageHeight;
+using autoaim_shm_image_transport::kImagePayloadSize;
+using autoaim_shm_image_transport::kImageStep;
+using autoaim_shm_image_transport::kImageWidth;
 
 inline void set_fixed_string(shm_msgs::msg::String & msg, const std::string & value)
 {

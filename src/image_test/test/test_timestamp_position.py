@@ -7,6 +7,8 @@ import unittest
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PUB_SOURCE = (PACKAGE_DIR / "src" / "image_pub.cpp").read_text()
 SUB_SOURCE = (PACKAGE_DIR / "src" / "image_sub.cpp").read_text()
+PUB_HEADER = (PACKAGE_DIR / "include" / "image_test" / "image_pub.hpp").read_text()
+SUB_HEADER = (PACKAGE_DIR / "include" / "image_test" / "image_sub.hpp").read_text()
 
 
 def function_body(source: str, signature: str) -> str:
@@ -173,6 +175,59 @@ class TimestampPositionTest(unittest.TestCase):
             "auto msg = std::make_unique<sensor_msgs::msg::Image>();",
         )
         self.assertIn("img_msg->step", sub_body)
+
+    def test_mode_7_uses_autoaim_shared_memory_ring_path(self) -> None:
+        pub_constructor = function_body(PUB_SOURCE, "image_pub::image_pub")
+        sub_constructor = function_body(SUB_SOURCE, "image_sub::image_sub")
+        pub_body = function_body(PUB_SOURCE, "void image_pub::publish_image_autoaim_shm()")
+        sub_body = function_body(SUB_SOURCE, "void image_sub::startAutoAimShmReceiver(bool copy_image)")
+        launch_source = (PACKAGE_DIR / "launch" / "image_test.launch.py").read_text()
+
+        self.assertIn("case 7:", pub_constructor)
+        self.assertIn("case 7:", sub_constructor)
+        self.assertIn(
+            '#include "autoaim_shm_image_transport/autoaim_shm_image_transport.hpp"',
+            PUB_HEADER,
+        )
+        self.assertIn(
+            '#include "autoaim_shm_image_transport/autoaim_shm_image_transport.hpp"',
+            SUB_HEADER,
+        )
+        self.assertNotIn(
+            '#include "image_test/autoaim_shm_image_transport.hpp"',
+            PUB_HEADER,
+        )
+        self.assertNotIn(
+            '#include "image_test/autoaim_shm_image_transport.hpp"',
+            SUB_HEADER,
+        )
+        self.assertIn("autoaim_shm_publisher_", PUB_SOURCE)
+        self.assertIn("autoaim_shm_subscriber_", SUB_SOURCE)
+        self.assertIn("publish_image_autoaim_shm", pub_constructor)
+        self.assertIn("startAutoAimShmReceiver(copy_image)", sub_constructor)
+        self.assertIn("autoaim_shm_name", launch_source)
+        self.assertIn("'autoaim_shm_name': LaunchConfiguration('autoaim_shm_name')", launch_source)
+        self.assertIn("mode 7", launch_source)
+
+        self.assert_before(
+            pub_body,
+            "if (image.empty())",
+            "const auto image_ready_steady_ns",
+        )
+        self.assertIn(
+            "autoaim_shm_image_transport::autoaim_shm_steady_time_ns()",
+            pub_body,
+        )
+        self.assert_before(
+            pub_body,
+            "const auto image_ready_steady_ns",
+            "autoaim_shm_publisher_->publish(image, image_ready_steady_ns);",
+        )
+
+        self.assertIn("wait_for_frame(copy_image)", sub_body)
+        self.assertIn("frame.publish_time_ns", sub_body)
+        self.assertIn("autoaim_shm_image_transport::autoaim_shm_steady_time_ns()", sub_body)
+        self.assertIn("RCLCPP_INFO_STREAM", sub_body)
 
     def test_shm_video_latency_uses_frame_start_timestamp(self) -> None:
         body = function_body(SUB_SOURCE, "void image_sub::startShmVideoReceiver(bool copy_image)")

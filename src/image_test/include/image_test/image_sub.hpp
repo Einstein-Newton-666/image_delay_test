@@ -14,6 +14,7 @@
 #include <thread>
 #include <vector>
 
+#include "autoaim_shm_image_transport/autoaim_shm_image_transport.hpp"
 #include "image_test/image_pack.hpp"
 #include "shm_video_transmission/shm_video_transmission.h"
 #include <umt/umt.hpp>
@@ -53,6 +54,8 @@ namespace image_test{
 
         void startIceoryxReceiver();
 
+        void startAutoAimShmReceiver(bool copy_image);
+
         void imageCallback1(const sensor_msgs::msg::Image::ConstSharedPtr img_msg);
 
         void imageCallback2(const sensor_msgs::msg::Image::ConstSharedPtr img_msg);
@@ -60,6 +63,8 @@ namespace image_test{
         void uniqueImageCallback(sensor_msgs::msg::Image::UniquePtr img_msg);
 
         void shmImageCallback(const shm_msgs::msg::Image8m::SharedPtr img_msg);
+
+        std::unique_ptr<autoaim_shm_image_transport::AutoAimShmImageSubscriber> autoaim_shm_subscriber_;
     };
 
 }

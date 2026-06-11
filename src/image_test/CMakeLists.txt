@@ -14,9 +14,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(ament_cmake_auto REQUIRED)
 find_package(Python 3.6 REQUIRED COMPONENTS Development Interpreter)
 find_package(Boost REQUIRED system filesystem date_time iostreams serialization)
-find_package(VTK REQUIRED)
 find_package(libusb REQUIRED)
 
+find_package(autoaim_shm_image_transport REQUIRED)
 find_package(shm_msgs REQUIRED)
 find_package(iceoryx_posh REQUIRED)
 
@@ -39,6 +39,7 @@ target_include_directories(image_sub PUBLIC
 
 rclcpp_components_register_node(image_sub PLUGIN image_test::image_sub EXECUTABLE image_sub_node)
 target_link_libraries(image_sub iceoryx_posh::iceoryx_posh)
+ament_target_dependencies(image_sub autoaim_shm_image_transport)
 
 ament_auto_add_library(image_pub SHARED src/image_pub.cpp)
 
@@ -48,6 +49,7 @@ target_include_directories(image_pub PUBLIC
   $<INSTALL_INTERFACE:include>)
 
 rclcpp_components_register_node(image_pub PLUGIN image_test::image_pub EXECUTABLE image_pub_node)
+ament_target_dependencies(image_pub autoaim_shm_image_transport)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -56,7 +58,12 @@ if(BUILD_TESTING)
   target_include_directories(test_image_pub_utils PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-  ament_target_dependencies(test_image_pub_utils rclcpp shm_msgs OpenCV)
+  ament_target_dependencies(
+    test_image_pub_utils
+    rclcpp
+    shm_msgs
+    OpenCV
+    autoaim_shm_image_transport)
 
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

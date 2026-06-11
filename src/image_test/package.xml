@@ -16,6 +16,7 @@
   <depend>vision_opencv</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
+  <depend>autoaim_shm_image_transport</depend>
   <depend>UltraMultiThread</depend>
   <depend>shm_video_transmission</depend>
   <depend>Python</depend>
