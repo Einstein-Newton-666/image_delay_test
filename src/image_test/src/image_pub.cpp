@@ -282,6 +282,20 @@ void image_pub::publish_image_unique(){
 }
 
 void image_pub::publish_image_autoaim_shm(){
+    if (generate_in_transport_buffer_) {
+        auto frame = autoaim_shm_publisher_->borrow_frame(
+            kImageWidth, kImageHeight, CV_8UC3);
+        if (!frame.valid()) {
+            return;
+        }
+
+        frame.image().setTo(cv::Scalar(0, 0, 0));
+        const auto image_ready_steady_ns =
+            autoaim_shm_image_transport::autoaim_shm_steady_time_ns();
+        frame.commit(image_ready_steady_ns);
+        return;
+    }
+
     if (image.empty()) {
         image = cv::Mat(kImageHeight, kImageWidth, CV_8UC3, cv::Scalar(0, 0, 0));
     } else {

@@ -209,14 +209,34 @@ class TimestampPositionTest(unittest.TestCase):
         self.assertIn("'autoaim_shm_name': LaunchConfiguration('autoaim_shm_name')", launch_source)
         self.assertIn("mode 7", launch_source)
 
-        self.assert_before(
-            pub_body,
-            "if (image.empty())",
-            "const auto image_ready_steady_ns",
-        )
         self.assertIn(
             "autoaim_shm_image_transport::autoaim_shm_steady_time_ns()",
             pub_body,
+        )
+        self.assertIn("if (generate_in_transport_buffer_)", pub_body)
+        self.assertIn("auto frame = autoaim_shm_publisher_->borrow_frame", pub_body)
+        self.assertIn("frame.image().setTo(cv::Scalar(0, 0, 0));", pub_body)
+        self.assertIn("frame.commit(image_ready_steady_ns);", pub_body)
+        self.assert_before(
+            pub_body,
+            "if (generate_in_transport_buffer_)",
+            "if (image.empty())",
+        )
+        direct_body = block_from(pub_body, "if (generate_in_transport_buffer_)")
+        self.assert_before(
+            direct_body,
+            "frame.image().setTo(cv::Scalar(0, 0, 0));",
+            "const auto image_ready_steady_ns",
+        )
+        self.assert_before(
+            direct_body,
+            "const auto image_ready_steady_ns",
+            "frame.commit(image_ready_steady_ns);",
+        )
+        self.assert_before(
+            pub_body,
+            "if (image.empty())",
+            "autoaim_shm_publisher_->publish(image, image_ready_steady_ns);",
         )
         self.assert_before(
             pub_body,

@@ -66,3 +66,61 @@ TEST(AutoAimShmTransport, ZeroCopyFrameHoldsReadGuardUntilFrameIsDestroyed)
 
   EXPECT_EQ(publisher.ring()->slots[0].reader_count.load(std::memory_order_acquire), 0U);
 }
+
+TEST(AutoAimShmTransport, BorrowedFramePublishesSharedMemoryBackedMat)
+{
+  const auto shm_name = unique_shm_name("borrow");
+  autoaim_shm_image_transport::AutoAimShmImagePublisher publisher(shm_name, false);
+  autoaim_shm_image_transport::AutoAimShmImageSubscriber subscriber(shm_name, -1, false);
+  ASSERT_TRUE(subscriber.attach());
+
+  auto frame = publisher.borrow_frame(3, 2, CV_8UC3);
+  ASSERT_TRUE(frame.valid());
+  EXPECT_EQ(frame.sequence(), 1U);
+  EXPECT_EQ(frame.image().rows, 2);
+  EXPECT_EQ(frame.image().cols, 3);
+  EXPECT_EQ(frame.image().data, publisher.ring()->slots[0].data.data());
+
+  frame.image().setTo(cv::Scalar(10, 20, 30));
+  frame.image().at<cv::Vec3b>(1, 2) = cv::Vec3b(70, 80, 90);
+  frame.commit(987654321ULL);
+
+  auto received = subscriber.wait_for_frame(false);
+
+  ASSERT_TRUE(received.valid);
+  EXPECT_FALSE(received.copied);
+  EXPECT_EQ(received.sequence, 1ULL);
+  EXPECT_EQ(received.publish_time_ns, 987654321ULL);
+  EXPECT_EQ(received.image.data, subscriber.ring()->slots[0].data.data());
+  EXPECT_EQ(received.image.at<cv::Vec3b>(0, 0), cv::Vec3b(10, 20, 30));
+  EXPECT_EQ(received.image.at<cv::Vec3b>(1, 2), cv::Vec3b(70, 80, 90));
+}
+
+TEST(AutoAimShmTransport, UncommittedBorrowedFrameReleasesSlotWithoutPublishing)
+{
+  const auto shm_name = unique_shm_name("cancel");
+  autoaim_shm_image_transport::AutoAimShmImagePublisher publisher(shm_name, false);
+  autoaim_shm_image_transport::AutoAimShmImageSubscriber subscriber(shm_name, -1, false);
+  ASSERT_TRUE(subscriber.attach());
+
+  {
+    auto frame = publisher.borrow_frame(3, 2, CV_8UC3);
+    ASSERT_TRUE(frame.valid());
+    EXPECT_EQ(
+      publisher.ring()->slots[0].reader_count.load(std::memory_order_acquire),
+      autoaim_shm_image_transport::AutoAimSharedRingBuffer::kWriterLocked);
+    frame.image().setTo(cv::Scalar(1, 2, 3));
+  }
+
+  EXPECT_EQ(publisher.ring()->published_seq.load(std::memory_order_acquire), 0U);
+  EXPECT_EQ(publisher.ring()->slots[0].reader_count.load(std::memory_order_acquire), 0U);
+
+  cv::Mat source(2, 3, CV_8UC3, cv::Scalar(4, 5, 6));
+  publisher.publish(source, 111ULL);
+  auto received = subscriber.wait_for_frame(true);
+
+  ASSERT_TRUE(received.valid);
+  EXPECT_EQ(received.sequence, 1ULL);
+  EXPECT_EQ(received.publish_time_ns, 111ULL);
+  EXPECT_EQ(received.image.at<cv::Vec3b>(0, 0), cv::Vec3b(4, 5, 6));
+}
